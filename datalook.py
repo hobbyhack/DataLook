@@ -1,8 +1,9 @@
 import numpy as np
 import pandas as pd
+import time
 from dataclasses import dataclass
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder
+from sklearn.preprocessing import LabelEncoder, StandardScaler, MaxAbsScaler
 from sklearn.base import clone
 
 from sklearn.tree import DecisionTreeRegressor
@@ -25,6 +26,7 @@ class DataLook:
         'transforms' : [],
         'models' : [],
         'metrics' : [],
+        'scalers' : [],
     }
     
     results = []
@@ -38,6 +40,7 @@ class DataLook:
             'transforms' : [],
             'models' : [],
             'metrics' : [],
+            'scalers' : [],
         }
     
     def clear_results(self):
@@ -46,7 +49,7 @@ class DataLook:
         """
         self.results = []
     
-    def add_result(self, dataset, transforms, model, scores):
+    def add_result(self, dataset, transforms, model, scores, model_result, scaler):
         """
         Function to add a single result to the results list
         """
@@ -62,9 +65,13 @@ class DataLook:
             'transform' : transform_str,
             'model' : model['fname'],
             'params' : model['params'],
+            'runtime_sec' : model_result['runtime_sec'],
+            'scaler' : scaler
         }
         
         result.update(scores)
+
+        result['long_param'] = model_result['params']
         
         self.results.append(result)
         
@@ -86,6 +93,9 @@ class DataLook:
             
         for metric in stack['metrics']:
             self.data_stack['metrics'].append(metric)
+        
+        for scaler in stack['scalers']:
+            self.data_stack['scalers'].append(scaler)
 
     def add_dataset(self, dataset):
         self.data_stack['datasets'].append(dataset)
@@ -112,6 +122,12 @@ class DataLook:
         y = df[y_values]
         X = df.drop(y_values, axis=1)
         return([y, X])
+    
+    def split_data(self, df, y_values):
+        y = df[y_values]
+        X = df.drop(y_values, axis=1)
+        
+        return(train_test_split(X, y, random_state = 29))
     
     def transform_data(self, df, transforms):
         """
@@ -154,12 +170,15 @@ class DataLook:
         """
         result = {}
 
+        start_time = time.time()
+
         func = model_input['fname'] + '(**model_input["params"])'
         model = eval(func)
 
         model.fit(train_X, train_y)
         result['predicted'] = model.predict(test_X)
         result['params'] = model
+        result['runtime_sec'] = time.time() - start_time
     
         return(result)
     
@@ -169,6 +188,19 @@ class DataLook:
         score = eval(func)
 
         return(score)
+    
+    def scale_data(self, train_X, test_X, scaler):
+        func = scaler + '().fit(' + 'train_X' + ')'
+    #     print(func)
+        
+        scaler = eval(func)
+        scaled_train_X = scaler.transform(train_X)
+        train_X_df = pd.DataFrame(scaled_train_X, columns=train_X.columns)
+        
+        scaled_test_X = scaler.transform(test_X)
+        test_X_df = pd.DataFrame(scaled_test_X, columns=test_X.columns)
+        
+        return([train_X_df, test_X_df])
         
     def process_stack(self):
         """
@@ -179,18 +211,23 @@ class DataLook:
             
             df = self.transform_data(df, self.data_stack['transforms'])
         
-            y, X = self.get_x_y(df, dataset['y_values'])
-            
-            train_X, test_X, train_y, test_y = train_test_split(X, y, random_state = 29)
-            
-            for model in self.data_stack['models']:
-                result = self.run_model(model, train_X, train_y.values.ravel(), test_X)
+            noscale_train_X, noscale_test_X, train_y, test_y = self.split_data(df, dataset['y_values'])
 
-                scores = {}
-                for metric in self.data_stack['metrics']:
-                    scores[metric] = self.score_results(metric, actual=test_y, predicted=result['predicted'])
+            for scaler in self.data_stack['scalers']:
+                
+                if scaler == 'NoScale':
+                    train_X, test_X = noscale_train_X, noscale_test_X
+                else:
+                    train_X, test_X = self.scale_data(noscale_train_X, noscale_test_X, scaler)
 
-                self.add_result(dataset, self.data_stack['transforms'], model, scores)
+                for model in self.data_stack['models']:
+                    result = self.run_model(model, train_X, train_y.values.ravel(), test_X)
+
+                    scores = {}
+                    for metric in self.data_stack['metrics']:
+                        scores[metric] = self.score_results(metric, actual=test_y, predicted=result['predicted'])
+
+                    self.add_result(dataset, self.data_stack['transforms'], model, scores, result, scaler)
                 
         self.clear_stack()
         
