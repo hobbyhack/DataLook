@@ -70,6 +70,7 @@ class DataLook:
         }
         
         result.update(scores)
+        result['importances'] = model_result['importances']
 
         result['long_param'] = model_result['params']
         
@@ -179,6 +180,18 @@ class DataLook:
         result['predicted'] = model.predict(test_X)
         result['params'] = model
         result['runtime_sec'] = time.time() - start_time
+
+        try:
+            feature_df = pd.DataFrame({'feature' : [column for column in train_X.columns], 
+                                  'importance' : [importance for importance in model.feature_importances_]})
+            feature_df.sort_values('importance', ascending=False, inplace=True)
+            feature_df['importance'] = np.round(feature_df['importance'], decimals=2)
+            feature_importance = {}
+            for row in feature_df.index: 
+                feature_importance[feature_df['feature'][row]] =  feature_df['importance'][row]
+            result['importances'] = feature_importance
+        except:
+            result['importances'] = []
     
         return(result)
     
